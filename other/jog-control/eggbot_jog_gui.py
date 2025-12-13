@@ -86,7 +86,13 @@ IMPORT_ERROR = import_error
 # Hardware constants
 STEPS_PER_MM = 40.0  # Approximately 40 steps per mm
 STEP_SCALE = 2       # Step scaling factor
-DEFAULT_JOG_SPEED = 200  # Steps per second
+DEFAULT_JOG_SPEED = 1000  # Steps per second
+
+# Safety limits
+MAX_DISTANCE_MM = 50.0  # Maximum safe jog distance in mm
+MAX_SPEED_SPS = 2000    # Maximum safe speed in steps per second
+WARN_DISTANCE_MM = 40.0 # Warn if distance exceeds this
+WARN_SPEED_SPS = 1500   # Warn if speed exceeds this
 
 
 class EggBotJogGUI:
@@ -103,6 +109,7 @@ class EggBotJogGUI:
         self.is_connected = False
         self.x_distance = 25.0  # mm
         self.y_distance = 25.0  # mm
+        self.jog_speed = DEFAULT_JOG_SPEED  # steps per second
         self.servo_position = 16000  # Current servo position (center position)
         self.movement_in_progress = False  # Track if movement is ongoing
         self.movement_start_time = None
@@ -206,7 +213,7 @@ class EggBotJogGUI:
         x_spinbox = ttk.Spinbox(
             settings_frame,
             from_=0.1,
-            to=100.0,
+            to=MAX_DISTANCE_MM,
             increment=0.1,
             textvariable=self.x_distance_var,
             width=10
@@ -219,12 +226,25 @@ class EggBotJogGUI:
         y_spinbox = ttk.Spinbox(
             settings_frame,
             from_=0.1,
-            to=100.0,
+            to=MAX_DISTANCE_MM,
             increment=0.1,
             textvariable=self.y_distance_var,
             width=10
         )
         y_spinbox.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=5)
+        
+        # Speed setting
+        ttk.Label(settings_frame, text="Speed (steps/sec):", font=('Arial', 10)).grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.speed_var = tk.IntVar(value=DEFAULT_JOG_SPEED)
+        speed_spinbox = ttk.Spinbox(
+            settings_frame,
+            from_=10,
+            to=MAX_SPEED_SPS,
+            increment=10,
+            textvariable=self.speed_var,
+            width=10
+        )
+        speed_spinbox.grid(row=2, column=1, sticky=tk.W, padx=(10, 0), pady=5)
         
         # Pen servo settings section (middle)
         servo_frame = ttk.LabelFrame(settings_container, text="Pen Servo Settings", padding="10")
@@ -588,13 +608,18 @@ class EggBotJogGUI:
             self.log("Movement already in progress, ignoring command")
             return
         
+        # Validate distance and speed
+        speed = self.speed_var.get()
+        if not self.validate_movement_parameters(abs(distance_mm), speed, "X"):
+            return
+        
         try:
             self.movement_in_progress = True
             steps = int(distance_mm * STEPS_PER_MM / STEP_SCALE)
-            n_time = int(1000.0 * abs(distance_mm) / (1.0 / STEPS_PER_MM * STEP_SCALE) / DEFAULT_JOG_SPEED)
+            n_time = int(1000.0 * abs(distance_mm) / (1.0 / STEPS_PER_MM * STEP_SCALE) / speed)
             n_time = max(1, n_time)
             
-            self.log("Jog X: {:.2f}mm ({} steps)".format(distance_mm, steps))
+            self.log("Jog X: {:.2f}mm ({} steps, {} steps/sec)".format(distance_mm, steps, speed))
             # EggBot H-bot kinematics: both motors same direction for X (egg rotation)
             # SM command: SM,time,motor1_steps,motor2_steps
             str_output = 'SM,{0},{1},{1}\r'.format(n_time, steps)
@@ -620,13 +645,18 @@ class EggBotJogGUI:
             self.log("Movement already in progress, ignoring command")
             return
         
+        # Validate distance and speed
+        speed = self.speed_var.get()
+        if not self.validate_movement_parameters(abs(distance_mm), speed, "Y"):
+            return
+        
         try:
             self.movement_in_progress = True
             steps = int(distance_mm * STEPS_PER_MM / STEP_SCALE)
-            n_time = int(1000.0 * abs(distance_mm) / (1.0 / STEPS_PER_MM * STEP_SCALE) / DEFAULT_JOG_SPEED)
+            n_time = int(1000.0 * abs(distance_mm) / (1.0 / STEPS_PER_MM * STEP_SCALE) / speed)
             n_time = max(1, n_time)
             
-            self.log("Jog Y: {:.2f}mm ({} steps)".format(distance_mm, steps))
+            self.log("Jog Y: {:.2f}mm ({} steps, {} steps/sec)".format(distance_mm, steps, speed))
             # EggBot H-bot kinematics: motors opposite direction for Y (pen carriage)
             # SM command: SM,time,motor1_steps,motor2_steps  
             str_output = 'SM,{0},{1},{2}\r'.format(n_time, -steps, steps)
@@ -643,6 +673,53 @@ class EggBotJogGUI:
             self.log("ERROR during Y jog: {}".format(str(e)))
             messagebox.showerror("Jog Error", "Error during Y jog:\n{}".format(str(e)))
             
+    def validate_movement_parameters(self, distance_mm, speed_sps, axis):
+        """Validate movement parameters and warn user if they exceed safe limits"""
+        warnings = []
+        
+        # Check if values exceed absolute maximum
+        if distance_mm > MAX_DISTANCE_MM:
+            messagebox.showerror(
+                "Distance Too Large",
+                f"Distance {distance_mm:.1f}mm exceeds maximum safe limit of {MAX_DISTANCE_MM}mm.\n\n"
+                f"Please reduce the distance and try again."
+            )
+            self.log(f"ERROR: {axis} distance {distance_mm:.1f}mm exceeds maximum {MAX_DISTANCE_MM}mm")
+            return False
+        
+        if speed_sps > MAX_SPEED_SPS:
+            messagebox.showerror(
+                "Speed Too High",
+                f"Speed {speed_sps} steps/sec exceeds maximum safe limit of {MAX_SPEED_SPS} steps/sec.\n\n"
+                f"Please reduce the speed and try again."
+            )
+            self.log(f"ERROR: Speed {speed_sps} steps/sec exceeds maximum {MAX_SPEED_SPS} steps/sec")
+            return False
+        
+        # Check if values exceed warning thresholds
+        if distance_mm > WARN_DISTANCE_MM:
+            warnings.append(f"Distance ({distance_mm:.1f}mm) exceeds recommended limit of {WARN_DISTANCE_MM}mm")
+        
+        if speed_sps > WARN_SPEED_SPS:
+            warnings.append(f"Speed ({speed_sps} steps/sec) exceeds recommended limit of {WARN_SPEED_SPS} steps/sec")
+        
+        # If there are warnings, ask user to confirm
+        if warnings:
+            warning_msg = "\n".join([f"• {w}" for w in warnings])
+            result = messagebox.askokcancel(
+                "High Parameter Warning",
+                f"Warning for {axis}-axis movement:\n\n{warning_msg}\n\n"
+                f"This may cause excessive wear or inaccurate positioning.\n\n"
+                f"Do you want to proceed anyway?"
+            )
+            if not result:
+                self.log(f"{axis} jog cancelled by user due to high parameters")
+                return False
+            else:
+                self.log(f"WARNING: {axis} jog proceeding with high parameters")
+        
+        return True
+    
     def stop_movement(self):
         """Emergency stop - immediately halt all motor movement"""
         if not self.is_connected:
