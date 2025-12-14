@@ -109,6 +109,8 @@ class GCodePlotterGUI:
         self.plot_size_x = 0.0
         self.plot_size_y = 0.0
         self.start_position = ""
+        self.executed_commands = 0
+        self.total_commands = 0
         
         # Create UI
         self.create_ui()
@@ -245,21 +247,41 @@ class GCodePlotterGUI:
         metrics_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         metrics_frame.columnconfigure(0, weight=1)
         
+        # Commands counter
+        commands_display_frame = ttk.Frame(metrics_frame)
+        commands_display_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        commands_display_frame.columnconfigure(1, weight=1)
+        
+        ttk.Label(commands_display_frame, text="Commands:", font=('Arial', 9, 'bold')).grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+        self.commands_counter_label = ttk.Label(commands_display_frame, text="0 / 0 (0%)", font=('Courier', 9))
+        self.commands_counter_label.grid(row=0, column=1, sticky=tk.W)
+        
+        self.commands_progress_bar = ttk.Progressbar(commands_display_frame, mode='determinate', length=400)
+        self.commands_progress_bar.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
+        
         # Time display
         time_display_frame = ttk.Frame(metrics_frame)
-        time_display_frame.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+        time_display_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(5, 5))
+        time_display_frame.columnconfigure(1, weight=1)
         
         ttk.Label(time_display_frame, text="Time:", font=('Arial', 9, 'bold')).grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
-        self.time_label = ttk.Label(time_display_frame, text="00:00:00 / 00:00:00 (est.)", font=('Courier', 9))
+        self.time_label = ttk.Label(time_display_frame, text="00:00:00 / 00:00:00 (0%)", font=('Courier', 9))
         self.time_label.grid(row=0, column=1, sticky=tk.W)
+        
+        self.time_progress_bar = ttk.Progressbar(time_display_frame, mode='determinate', length=400)
+        self.time_progress_bar.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
         
         # Distance display
         distance_display_frame = ttk.Frame(metrics_frame)
-        distance_display_frame.grid(row=1, column=0, sticky=tk.W)
+        distance_display_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
+        distance_display_frame.columnconfigure(1, weight=1)
         
         ttk.Label(distance_display_frame, text="Distance:", font=('Arial', 9, 'bold')).grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
-        self.distance_label = ttk.Label(distance_display_frame, text="0.0 / 0.0 mm (est.)", font=('Courier', 9))
+        self.distance_label = ttk.Label(distance_display_frame, text="0.0 / 0.0 mm (0%)", font=('Courier', 9))
         self.distance_label.grid(row=0, column=1, sticky=tk.W)
+        
+        self.distance_progress_bar = ttk.Progressbar(distance_display_frame, mode='determinate', length=400)
+        self.distance_progress_bar.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
         
         # Log section
         log_frame = ttk.LabelFrame(main_frame, text="Log", padding="10")
@@ -322,6 +344,17 @@ class GCodePlotterGUI:
     
     def update_metrics_display(self):
         """Update the metrics display labels"""
+        # Update commands counter
+        if self.total_commands > 0:
+            cmd_percent = (self.executed_commands / self.total_commands) * 100
+            self.commands_counter_label.config(text="{} / {} ({:.1f}%)".format(
+                self.executed_commands, self.total_commands, cmd_percent
+            ))
+            self.commands_progress_bar['value'] = cmd_percent
+        else:
+            self.commands_counter_label.config(text="0 / 0 (0%)")
+            self.commands_progress_bar['value'] = 0
+        
         # Calculate actual elapsed time
         if self.plot_start_time and self.is_plotting:
             actual_time = time.time() - self.plot_start_time
@@ -331,19 +364,33 @@ class GCodePlotterGUI:
         else:
             actual_time = 0
         
+        # Calculate time percentage
+        time_percent = 0
+        if self.estimated_time_sec > 0:
+            time_percent = min(100, (actual_time / self.estimated_time_sec) * 100)
+        
         # Format time display
-        time_str = "{} / {} (est.)".format(
+        time_str = "{} / {} ({:.1f}%)".format(
             self.format_time(actual_time),
-            self.format_time(self.estimated_time_sec)
+            self.format_time(self.estimated_time_sec),
+            time_percent
         )
         self.time_label.config(text=time_str)
+        self.time_progress_bar['value'] = time_percent
+        
+        # Calculate distance percentage
+        distance_percent = 0
+        if self.estimated_distance_mm > 0:
+            distance_percent = min(100, (self.actual_distance_mm / self.estimated_distance_mm) * 100)
         
         # Format distance display
-        distance_str = "{:.1f} / {:.1f} mm (est.)".format(
+        distance_str = "{:.1f} / {:.1f} mm ({:.1f}%)".format(
             self.actual_distance_mm,
-            self.estimated_distance_mm
+            self.estimated_distance_mm,
+            distance_percent
         )
         self.distance_label.config(text=distance_str)
+        self.distance_progress_bar['value'] = distance_percent
     
     def calculate_estimated_metrics(self):
         """Calculate estimated time and distance from parsed commands"""
@@ -527,8 +574,11 @@ class GCodePlotterGUI:
             self.actual_distance_mm = 0.0
             self.estimated_time_sec = 0.0
             self.plot_start_time = None
-            self.time_label.config(text="00:00:00 / 00:00:00 (est.)")
-            self.distance_label.config(text="0.0 / 0.0 mm (est.)")
+            self.executed_commands = 0
+            self.total_commands = 0
+            self.time_label.config(text="00:00:00 / 00:00:00 (0%)")
+            self.distance_label.config(text="0.0 / 0.0 mm (0%)")
+            self.commands_counter_label.config(text="0 / 0 (0%)")
             self.plot_size_label.config(text="Size: -- x -- mm", foreground="gray")
             self.start_position_label.config(text="Start: --", foreground="gray")
             
@@ -543,8 +593,10 @@ class GCodePlotterGUI:
                 parser = GCodeParser()
                 self.commands = parser.parse_file(self.gcode_file)
                 
+                self.total_commands = len(self.commands)
                 self.command_count_label.config(text="Commands: {}".format(len(self.commands)))
                 self.log("Successfully parsed {} commands".format(len(self.commands)))
+                self.update_metrics_display()
                 
                 # Calculate plot size
                 self.calculate_plot_size()
@@ -647,6 +699,7 @@ class GCodePlotterGUI:
         self.actual_distance_mm = 0.0
         self.current_x = 0.0
         self.current_y = 0.0
+        self.executed_commands = 0
         self.plot_start_time = time.time()
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
@@ -691,6 +744,7 @@ class GCodePlotterGUI:
                 
                 # Process command
                 self.plotter.process_command(cmd)
+                self.executed_commands = i + 1
                 
             if not self.stop_requested:
                 self.root.after(0, self.update_progress, total, total, 100)

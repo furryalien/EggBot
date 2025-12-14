@@ -89,10 +89,10 @@ STEP_SCALE = 2       # Step scaling factor
 DEFAULT_JOG_SPEED = 1000  # Steps per second
 
 # Safety limits
-MAX_DISTANCE_MM = 50.0  # Maximum safe jog distance in mm
-MAX_SPEED_SPS = 2000    # Maximum safe speed in steps per second
-WARN_DISTANCE_MM = 40.0 # Warn if distance exceeds this
-WARN_SPEED_SPS = 1500   # Warn if speed exceeds this
+MAX_DISTANCE_MM = 2000.0  # Maximum safe jog distance in mm
+MAX_SPEED_SPS = 2000      # Maximum safe speed in steps per second
+WARN_DISTANCE_MM = 500.0  # Warn if distance exceeds this
+WARN_SPEED_SPS = 1500     # Warn if speed exceeds this
 
 
 class EggBotJogGUI:
