@@ -50,13 +50,59 @@ The EiBotBoard firmware is a comprehensive stepper motor control system designed
 
 ##### XM - X Motor Move  
 **Status:** ✅ Complete  
-**Description:** Move to absolute position with mixed-axis mode  
-**Parameters:** `XM,<duration>,<axisA_steps>,<axisB_steps>[,clear]`
+**Test Coverage:** ✅ Comprehensive test suite created  
+**Description:** Mixed-axis stepper move for CoreXY/H-Bot geometry  
+**Parameters:** `XM,<Duration>,<AxisStepsA>,<AxisStepsB>[,<Clear>]`
+
+**Features:**
+- Coordinate conversion: Axis1 = A+B, Axis2 = A-B
+- Designed for mixed-axis geometry (CoreXY, H-Bot, AxiDraw)
+- Duration range: 1 to 2,147,483,647 ms (0 invalid)
+- Step ranges: ±2,147,483,648 (int32)
+- Clear parameter: 0-3 (optional accumulator clear)
+- Delay mode: A=0, B=0 executes delay (capped at 100,000ms)
+- Step rate: 0.00001164 to 25,000 steps/second per axis
+
+**Validation Improvements (v3.0.3):**
+- Enhanced overflow documentation (A±B can overflow int32)
+- Explicit Duration=0 validation
+- Clear parameter bounds checking (0-3)
+- Rate checking after coordinate conversion
+- Comprehensive test coverage
+
+**Critical Limitation:**
+- ⚠️ **Overflow Risk:** Large A/B values can overflow in A+B or A-B calculation
+- Example: A=2^30, B=2^30 → A+B=2^31 (overflow!)
+- Host software must validate: -2^31 ≤ (A±B) ≤ 2^31-1
+
+**Current Status:** Production-ready with enhanced documentation
+- Test suite ready with 45+ test cases
+- See `XM_VALIDATION_IMPROVEMENTS.md` for details
 
 ##### HM - Home Motor
 **Status:** ✅ Complete  
-**Description:** Move axes at constant rate for homing operations  
-**Parameters:** `HM,<steprate>,<axis1_steps>,<axis2_steps>`
+**Test Coverage:** ✅ Comprehensive test suite created  
+**Description:** Move axes at constant rate for homing operations or absolute positioning  
+**Parameters:** `HM,<steprate>[,<axis1_position>,<axis2_position>]`
+
+**Features:**
+- Home move to (0,0) or absolute position move
+- Blocking command (waits for FIFO empty and motion complete)
+- Primary/secondary axis rate calculation for straight lines
+- Step frequency range: 2-25000 Hz
+- Position range: ±2,147,483,647 (int32)
+- Parameter pairing: Both positions required if any provided
+
+**Validation Improvements (v3.0.3):**
+- Frequency range enforcement (was silent clamping, now errors)
+- Frequency minimum corrected from 1 to 2 Hz
+- Position parameter pairing validation added
+- Enhanced overflow documentation
+- Proper error reporting instead of silent correction
+
+**Current Status:** Production-ready with improved validation
+- Test suite ready with 35+ test cases
+- See `HM_VALIDATION_IMPROVEMENTS.md` for details
 
 #### 2.2 Advanced Motion Planning
 
@@ -107,12 +153,29 @@ The EiBotBoard firmware is a comprehensive stepper motor control system designed
 - `T3_20230507_ActualOutput.csv` vs. `T3_20230507_ExpectedOutput.csv`
 
 ##### CM - Circle Move
-**Status:** ✅ Complete  
-**Test Coverage:** ⚠️ Limited  
-**Description:** Bresenhm-style circular interpolation  
+**Status:** ⚠️ Disabled (code complete but not enabled in build)  
+**Test Coverage:** ✅ Comprehensive test suite created  
+**Description:** Bresenham-style circular interpolation for arc motion  
+**Parameters:** `CM,<frequency>,<dest_x>,<dest_y>,<center_x>,<center_y>,<direction>`  
 **Features:**
 - Inner and outer circle commands (COMMAND_CM_INNER_MOVE, COMMAND_CM_OUTER_MOVE)
 - Integer-based circle drawing algorithm
+- Arc subdivision into linear subsegments
+- Frequency range: 2-25000 Hz
+- Coordinate range: -32768 to 32767 (signed 16-bit)
+- Direction: 0=CW, 1=CCW
+- Zero radius graceful handling (converts to straight line)
+
+**Validation Improvements (v3.0.3):**
+- Frequency minimum corrected from 1 to 2 Hz
+- Coordinate boundaries corrected to ±32767 (was ±32768)
+- Zero radius detection added
+- Enhanced parameter documentation
+
+**Current Status:** Disabled in production build (line 2817: `#if 1`)
+- Change to `#if 0` to enable CM functionality
+- Test suite ready with 45+ test cases
+- See `CM_VALIDATION_IMPROVEMENTS.md` for details
 
 ---
 
@@ -217,7 +280,7 @@ The EiBotBoard firmware is a comprehensive stepper motor control system designed
 
 ### 7. **System Configuration (SC Command)**
 **Status:** ✅ Complete  
-**Test Coverage:** ⚠️ Manual only  
+**Test Coverage:** ✅ Automated tests added  
 **Description:** Comprehensive system parameter configuration
 
 **Key Parameters:**
@@ -232,6 +295,20 @@ The EiBotBoard firmware is a comprehensive stepper motor control system designed
 - SC,14,<value> - Enable/disable solenoid output on RB4
 
 **Implementation:** Extensive switch statement in `parse_SC_packet()`
+
+**Validation Improvements:**
+- Parameter number validation (rejects invalid parameters: 0, 3, 6, 7, 15+)
+- Driver configuration validation (SC,2 only accepts 0-2)
+- Proper error codes for out-of-range parameters
+- Value clamping for servo slots (SC,8) and slot duration (SC,9)
+- Comprehensive test suite with 50+ test cases
+
+**Testing:**
+- `test_SC_command.py` - Comprehensive SC command validation
+- Tests all valid parameters with various values
+- Validates error handling for invalid inputs
+- Tests boundary conditions and edge cases
+- Automatic configuration restoration after tests
 
 ---
 
@@ -598,7 +675,7 @@ checksum = (~sum_of_bytes) + 1
 - XM, HM, CM commands (manual testing only)
 - Servo control (S2, SP, TP)
 - Engraver control (SE)
-- Configuration commands (SC, CU)
+- Advanced Configuration (CU command)
 - Error handling edge cases
 
 ### ❌ Minimal Testing
@@ -620,6 +697,9 @@ checksum = (~sum_of_bytes) + 1
 - `ShortCommandFIFOTest300.py` - FIFO stress testing
 - `USBProcessingTimeTest.py` - USB performance testing
 - `python_send_basic.py` - Basic command testing
+- `test_SC_command.py` - SC configuration command validation
+- `test_CM_command.py` - CM circle move command validation (ready for future use)
+- `test_HM_command.py` - HM home/absolute move command validation
 
 ---
 

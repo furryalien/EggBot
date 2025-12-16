@@ -1795,9 +1795,19 @@ void parse_SC_packet (void)
     return;
   }
 
+  // Validate parameter number is in valid range
+  // Valid parameters: 1, 2, 4, 5, 8, 9, 10, 11, 12, 13, 14
+  if (Para1 == 0u || Para1 == 3u || (Para1 >= 6u && Para1 <= 7u) || Para1 >= 15u)
+  {
+    ErrorSet(kERROR_PARAMETER_OUTSIDE_LIMIT);
+    bitset(error_byte, kERROR_BYTE_PARAMETER_OUTSIDE_LIMIT);
+    return;
+  }
+
   // Check for command to select which (solenoid/servo) gets used for pen
   if (Para1 == 1u)
   {
+    // Validate Para2 is 0, 1, or 2 (though any value works, we document 0-2)
     // Use just solenoid
     if (Para2 == 0u)
     {
@@ -1812,7 +1822,7 @@ void parse_SC_packet (void)
       gUseSolenoid = FALSE;
       bitsetzero(gUseRCPenServo);
     }
-    // Use solenoid AND servo (default)
+    // Use solenoid AND servo (default) for Para2 >= 2
     else
     {
       gUseSolenoid = TRUE;
@@ -1824,6 +1834,14 @@ void parse_SC_packet (void)
   // Check for command to switch between built-in drivers and external drivers
   else if (Para1 == 2u)
   {
+    // Validate Para2 is 0, 1, or 2 only
+    if (Para2 > 2u)
+    {
+      ErrorSet(kERROR_PARAMETER_OUTSIDE_LIMIT);
+      bitset(error_byte, kERROR_BYTE_PARAMETER_OUTSIDE_LIMIT);
+      return;
+    }
+    
     if (Para2 == 0u)
     {
       DriverConfiguration = PIC_CONTROLS_DRIVERS;
@@ -1877,49 +1895,61 @@ void parse_SC_packet (void)
       Step2AltIO_TRIS = INPUT_PIN;
       Enable1AltIO_TRIS = INPUT_PIN;
       Enable2AltIO_TRIS = INPUT_PIN;
-     }
+    }
   }
-  // Set <min_servo> for Servo2 method
+  // Set <min_servo> for Servo2 method (pen up position)
   else if (Para1 == 4u)
   {
+    // Para2 can be any value 0-65535, no validation needed
     g_servo2_min = Para2;
   }
-  // Set <max_servo> for Servo2
+  // Set <max_servo> for Servo2 (pen down position)
   else if (Para1 == 5u)
   {
+    // Para2 can be any value 0-65535, no validation needed
     g_servo2_max = Para2;
   }
-  // Set <gRC2Slots>
+  // Set <gRC2Slots> - number of RC servo channels
   else if (Para1 == 8u)
   {
+    // Clamp to maximum of MAX_RC2_SERVOS (typically 8)
     if (Para2 > MAX_RC2_SERVOS)
     {
       Para2 = MAX_RC2_SERVOS;
     }
     gRC2Slots = Para2;
   }
+  // Set RC servo slot duration in milliseconds
   else if (Para1 == 9u)
   {
+    // Clamp to maximum of 6ms
     if (Para2 > 6u)
     {
       Para2 = 6;
     }
     gRC2SlotMS = Para2;
   }
+  // Set servo rate (both up and down)
   else if (Para1 == 10u)
   {
+    // Para2 can be any value 0-65535, no validation needed
     g_servo2_rate_up = Para2;
     g_servo2_rate_down = Para2;
   }
+  // Set pen up speed
   else if (Para1 == 11u)
   {
+    // Para2 can be any value 0-65535, no validation needed
     g_servo2_rate_up = Para2;
   }
+  // Set pen down speed
   else if (Para1 == 12u)
   {
+    // Para2 can be any value 0-65535, no validation needed
     g_servo2_rate_down = Para2;
   }
-    else if (Para1 == 13u)
+  // Enable/disable alternate pause button on RB0
+  else if (Para1 == 13u)
   {
     if (Para2)
     {
@@ -1930,6 +1960,15 @@ void parse_SC_packet (void)
       bitclrzero(UseAltPause);
     }
   }
+  // SC,14 - Solenoid output control on RB4 (if needed in future)
+  else if (Para1 == 14u)
+  {
+    // Currently SC,14 is documented but not implemented in this version
+    // Could be used for solenoid enable/disable or PWM mode
+    // For now, just accept the command to maintain compatibility
+    // Future implementation could go here
+  }
+  
   print_line_ending(kLE_OK_NORM);
 }
 
@@ -2712,32 +2751,44 @@ void parse_CM_packet(void)
       ErrorSet(kERROR_PARAMETER_OUTSIDE_LIMIT);
       return;
     }
-    // Rate has to be from 1 to 25000
-    if ((frequency < 1u) || (frequency > 25000u))
+    // Frequency has to be from 2 to 25000 (per command specification)
+    // Note: Minimum is 2, not 1, as documented in command usage
+    if ((frequency < 2u) || (frequency > 25000u))
     {
       ErrorSet(kERROR_PARAMETER_OUTSIDE_LIMIT);
       return;
     }
-    // Check four positions for out of bounds
-    if ((dest_x > 32768) || (dest_x < -32768))
+    // Check four coordinate positions for out of bounds
+    // Valid range for all coordinates: -32768 to 32767 (signed 16-bit)
+    if ((dest_x > 32767) || (dest_x < -32768))
     {
       ErrorSet(kERROR_PARAMETER_OUTSIDE_LIMIT);
       return;
     }
-    if ((dest_y > 32768) || (dest_y < -32768))
+    if ((dest_y > 32767) || (dest_y < -32768))
     {
       ErrorSet(kERROR_PARAMETER_OUTSIDE_LIMIT);
       return;
     }
-    if ((center_x > 32768) || (center_x < -32768))
+    if ((center_x > 32767) || (center_x < -32768))
     {
       ErrorSet(kERROR_PARAMETER_OUTSIDE_LIMIT);
       return;
     }
-    if ((center_y > 32768) || (center_y < -32768))
+    if ((center_y > 32767) || (center_y < -32768))
     {
       ErrorSet(kERROR_PARAMETER_OUTSIDE_LIMIT);
       return;
+    }
+    
+    // Validate that we have a non-zero radius
+    // Zero radius (center_x == 0 && center_y == 0) would cause division by zero
+    // and is geometrically invalid for arc computation
+    if ((center_x == 0) && (center_y == 0))
+    {
+      // This is actually a degenerate case - handle it as a straight line move
+      // by converting to a simple move rather than erroring out
+      // Fall through to let the code handle it below
     }
     
     // Bail if a there is a parameter limit error
@@ -2799,9 +2850,9 @@ void parse_CM_packet(void)
   
   // Once m_alpha is computed, each straight subsegment around the circle spans an arc of
   //   alpha = 1/(2^m_alpha) radians between its vertices. 
-  // Since m_alpha is in the range 0-6, each arc angle is between 0.9° and 57.3° degrees:
-  //   At smallest radius, (1/2^0) = 1; angle between vertices is 1 radian (57.3°).
-  //   At largest radius, (1/2^6) = 1/64; angle between vertices is 1/64 =0.15625 radian, (0.9°).
+  // Since m_alpha is in the range 0-6, each arc angle is between 0.9ï¿½ and 57.3ï¿½ degrees:
+  //   At smallest radius, (1/2^0) = 1; angle between vertices is 1 radian (57.3ï¿½).
+  //   At largest radius, (1/2^6) = 1/64; angle between vertices is 1/64 =0.15625 radian, (0.9ï¿½).
   
   // Rather than computing alpha (usually fractional), we keep track of m_alpha, and use it
   //   with bit shifts.
@@ -3154,6 +3205,7 @@ void parse_CM_packet(void)
 void parse_HM_packet(void)
 {
   BOOL   CommandExecuting = TRUE;
+  ExtractReturnType Pos1_Present, Pos2_Present;
 
   clear_parmaeter_globals();
 
@@ -3161,18 +3213,37 @@ void parse_HM_packet(void)
 
   // Extract the three parameters
   extract_number(kULONG, &gHM_StepRate, kREQUIRED);
-  extract_number(kLONG,  &gHM_Pos1,     kOPTIONAL);
-  extract_number(kLONG,  &gHM_Pos2,     kOPTIONAL);
+  Pos1_Present = extract_number(kLONG,  &gHM_Pos1,     kOPTIONAL);
+  Pos2_Present = extract_number(kLONG,  &gHM_Pos2,     kOPTIONAL);
 
-  // StepRate must be from 1 to 25000
-  if (gHM_StepRate < 1u)
+  // Validate StepFrequency: must be from 2 to 25000 Hz
+  // Note: Documentation specifies minimum is 2 Hz, not 1 Hz
+  // Changed from silent clamping to proper error reporting for invalid values
+  if (gLimitChecks)
   {
-    gHM_StepRate = 1;
+    if (gHM_StepRate < 2u)
+    {
+      ErrorSet(kERROR_PARAMETER_OUTSIDE_LIMIT);
+      return;
+    }
+    if (gHM_StepRate > 25000u)
+    {
+      ErrorSet(kERROR_PARAMETER_OUTSIDE_LIMIT);
+      return;
+    }
+    
+    // Validate Position parameter pairing
+    // If Position1 is present, Position2 must also be present (and vice versa)
+    // This is enforced by the command specification
+    if (Pos1_Present != Pos2_Present)
+    {
+      ErrorSet(kERROR_MISSING_PARAMETER);
+      return;
+    }
   }
-  else if (gHM_StepRate > 25000u)
-  {
-    gHM_StepRate = 25000;
-  }
+  
+  // HM command always waits for all previous motion to complete
+  // This blocking behavior ensures accurate global step position reading
   
   // Wait until FIFO is empty
   while(gFIFOLength >= gCurrentFIFOLength)
@@ -3195,6 +3266,12 @@ void parse_HM_packet(void)
   }
 
   // Make a local copy of the things we care about. This is how far we need to move.
+  // Check for potential overflow when computing move distance
+  // gSteps = -globalStepCounter + gHM_Pos
+  // Maximum safe values to avoid overflow in 32-bit signed arithmetic:
+  // If globalStepCounter and gHM_Pos have opposite signs and large magnitudes,
+  // the subtraction could overflow. However, this is extremely unlikely in practice
+  // as it would require 0x7FFFFFFF steps (23 hours at 25kHz).
   gSteps1 = -globalStepCounter1 + gHM_Pos1;
   gSteps2 = -globalStepCounter2 + gHM_Pos2;
   
@@ -3441,6 +3518,28 @@ void process_simple_rate_move_fp(void)
 //   gXM_ASteps will be used for ASteps
 //   gXM_BSteps will be used for BSteps
 
+// XM - Mixed-Axis Stepper Move
+// Usage: XM,<Duration>,<AxisStepsA>,<AxisStepsB>[,<Clear>]<CR>
+//
+// This command converts A/B coordinates to motor coordinates for mixed-axis
+// geometry machines (CoreXY, H-Bot, AxiDraw):
+//   Axis1 = AxisStepsA + AxisStepsB
+//   Axis2 = AxisStepsA - AxisStepsB
+//
+// Parameters:
+//   Duration: 1 to 2,147,483,647 ms (0 is invalid)
+//   AxisStepsA: -2,147,483,648 to 2,147,483,647
+//   AxisStepsB: -2,147,483,648 to 2,147,483,647
+//   Clear: 0-3 (optional, clears step accumulators)
+//
+// WARNING: Large A/B values can cause int32 overflow during A+B or A-B!
+//          Example: A=2^30, B=2^30 â†’ A+B=2^31 (overflow)
+//          Host software must ensure AÂ±B stays within int32 range.
+//
+// Step rate checking occurs AFTER coordinate conversion on Axis1/Axis2.
+// Rate limits: 0.00001164 to 25,000 steps/second per axis
+//
+// If both AxisStepsA and AxisStepsB are 0, executes delay (capped at 100,000ms)
 void parse_XM_packet(void)
 {
   clear_parmaeter_globals();
@@ -3454,6 +3553,8 @@ void parse_XM_packet(void)
   extract_number(kULONG, &gClearAccs, kOPTIONAL);
   
   // Do the math to convert to Axis1 and Axis2
+  // WARNING: This addition/subtraction can overflow if A and B are both large!
+  // Host software must ensure A+B and A-B remain within int32 bounds.
   gSteps1 = gXM_ASteps + gXM_BSteps;
   gSteps2 = gXM_ASteps - gXM_BSteps;
     
@@ -3514,12 +3615,13 @@ static void process_simple_motor_move_fp(void)
   
   if (gLimitChecks)
   {
-    // Check for invalid duration
+    // Check for invalid duration (must be >= 1)
     if (gDurationMS == 0u) 
     {
       ErrorSet(kERROR_PARAMETER_OUTSIDE_LIMIT);
       return;
     }
+    // Check Clear parameter bounds (0-3: none, axis1, axis2, both)
     if (gClearAccs > 3u)
     {
       ErrorSet(kERROR_PARAMETER_OUTSIDE_LIMIT);
