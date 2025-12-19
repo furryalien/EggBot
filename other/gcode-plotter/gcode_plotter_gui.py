@@ -88,7 +88,7 @@ class GCodePlotterGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("EggBot G-Code Plotter")
-        self.root.geometry("700x600")
+        self.root.geometry("900x600")
         
         # Application state
         self.gcode_file = None
@@ -97,6 +97,9 @@ class GCodePlotterGUI:
         self.plot_thread = None
         self.is_plotting = False
         self.stop_requested = False
+        self.is_paused = False
+        self.pause_requested = False
+        self.paused_position = None
         
         # Metrics tracking
         self.estimated_distance_mm = 0.0
@@ -210,6 +213,15 @@ class GCodePlotterGUI:
         )
         self.start_btn.grid(row=0, column=2, padx=5, pady=5)
         
+        self.pause_btn = ttk.Button(
+            control_frame,
+            text="Pause Plot",
+            command=self.toggle_pause,
+            state=tk.DISABLED,
+            width=15
+        )
+        self.pause_btn.grid(row=0, column=3, padx=5, pady=5)
+        
         self.stop_btn = ttk.Button(
             control_frame,
             text="Stop Plot",
@@ -217,7 +229,17 @@ class GCodePlotterGUI:
             state=tk.DISABLED,
             width=15
         )
-        self.stop_btn.grid(row=0, column=3, padx=5, pady=5)
+        self.stop_btn.grid(row=0, column=4, padx=5, pady=5)
+        
+        # Pen toggle button (only enabled when paused)
+        self.pen_toggle_btn = ttk.Button(
+            control_frame,
+            text="Toggle Pen",
+            command=self.toggle_pen,
+            state=tk.DISABLED,
+            width=15
+        )
+        self.pen_toggle_btn.grid(row=1, column=3, padx=5, pady=5)
         
         # Status section
         status_frame = ttk.LabelFrame(main_frame, text="Status", padding="10")
@@ -696,12 +718,16 @@ class GCodePlotterGUI:
         # Start plotting thread
         self.is_plotting = True
         self.stop_requested = False
+        self.is_paused = False
+        self.pause_requested = False
+        self.paused_position = None
         self.actual_distance_mm = 0.0
         self.current_x = 0.0
         self.current_y = 0.0
         self.executed_commands = 0
         self.plot_start_time = time.time()
         self.start_btn.config(state=tk.DISABLED)
+        self.pause_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.NORMAL)
         self.set_status("Plotting...", "blue")
         
@@ -722,6 +748,31 @@ class GCodePlotterGUI:
                 if self.stop_requested:
                     self.log("Plot stopped by user at command {}/{}".format(i, total))
                     break
+                
+                # Handle pause request
+                if self.pause_requested and not self.is_paused:
+                    self.log("Pausing plot at command {}/{}...".format(i, total))
+                    # Save current position
+                    self.paused_position = (self.current_x, self.current_y)
+                    # Raise pen
+                    if self.plotter and self.plotter.serial_port:
+                        self.plotter.pen_up()
+                        self.log("Pen raised to up position")
+                    self.is_paused = True
+                    self.root.after(0, self.update_pause_state, True)
+                    
+                # Wait while paused
+                while self.is_paused and not self.stop_requested:
+                    time.sleep(0.1)
+                
+                # Resume from pause
+                if self.pause_requested and not self.is_paused:
+                    self.log("Resuming plot from command {}/{}".format(i, total))
+                    # Lower pen back down
+                    if self.plotter and self.plotter.serial_port:
+                        self.plotter.pen_down()
+                        self.log("Pen lowered to down position")
+                    self.pause_requested = False
                 
                 # Update progress (thread-safe)
                 progress_pct = int((i / float(total)) * 100)
@@ -781,13 +832,69 @@ class GCodePlotterGUI:
     def plot_finished(self):
         """Clean up after plotting finishes"""
         self.stop_btn.config(state=tk.DISABLED)
+        self.pause_btn.config(state=tk.DISABLED)
+        self.pen_toggle_btn.config(state=tk.DISABLED)
         self.start_btn.config(state=tk.NORMAL)
+        self.is_paused = False
+        self.pause_requested = False
         self.set_status("Connected", "green")
         
+    def toggle_pause(self):
+        """Toggle between pause and resume"""
+        if self.is_plotting:
+            if self.is_paused:
+                # Resume
+                self.resume_plot()
+            else:
+                # Pause
+                self.pause_plot()
+        
+    def pause_plot(self):
+        """Pause the plot and raise the pen"""
+        if self.is_plotting and not self.is_paused:
+            self.pause_requested = True
+            self.log("Pause requested...")
+    
+    def update_pause_state(self, paused):
+        """Update UI for pause state (called from plot thread)"""
+        if paused:
+            self.pause_btn.config(text="Resume Plot")
+            self.pen_toggle_btn.config(state=tk.NORMAL)
+            self.set_status("Paused", "orange")
+            self.log("Plot paused - pen toggle enabled for pen changes")
+        else:
+            self.pause_btn.config(text="Pause Plot")
+            self.pen_toggle_btn.config(state=tk.DISABLED)
+            self.set_status("Plotting...", "blue")
+    
+    def resume_plot(self):
+        """Resume the paused plot"""
+        if self.is_paused:
+            self.is_paused = False
+            self.log("Resume requested...")
+    
+    def toggle_pen(self):
+        """Toggle pen up/down while paused (for pen changes)"""
+        if not self.is_paused:
+            return
+        
+        if self.plotter and self.plotter.serial_port:
+            try:
+                # Query current pen state and toggle it
+                if self.plotter.pen_is_down:
+                    self.plotter.pen_up()
+                    self.log("Pen moved to UP position")
+                else:
+                    self.plotter.pen_down()
+                    self.log("Pen moved to DOWN position")
+            except Exception as e:
+                self.log("Error toggling pen: {}".format(str(e)))
+    
     def stop_plot(self):
         """Request plot to stop and immediately halt all motor movement"""
         if self.is_plotting:
             self.stop_requested = True
+            self.is_paused = False  # Exit pause state if paused
             self.log("EMERGENCY STOP - Halting all movement")
             
             # Immediately send emergency stop command to halt motors
@@ -799,6 +906,8 @@ class GCodePlotterGUI:
                     self.log(f"Error sending emergency stop: {e}")
             
             self.stop_btn.config(state=tk.DISABLED)
+            self.pause_btn.config(state=tk.DISABLED)
+            self.pen_toggle_btn.config(state=tk.DISABLED)
             
     def on_closing(self):
         """Handle window close event"""
@@ -828,8 +937,8 @@ def main():
     
     # Center window on screen
     root.update_idletasks()
-    width = root.winfo_width()
-    height = root.winfo_height()
+    width = 900  # Use fixed width
+    height = 600  # Use fixed height
     x = (root.winfo_screenwidth() // 2) - (width // 2)
     y = (root.winfo_screenheight() // 2) - (height // 2)
     root.geometry('{}x{}+{}+{}'.format(width, height, x, y))
