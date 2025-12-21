@@ -389,16 +389,20 @@ class GCodePlotterGUI:
         # Calculate time percentage
         time_percent = 0
         if self.estimated_time_sec > 0:
-            time_percent = min(100, (actual_time / self.estimated_time_sec) * 100)
+            time_percent = (actual_time / self.estimated_time_sec) * 100
+            # Cap progress bar at 100% but show actual percentage in text
+            time_progress_bar_value = min(100, time_percent)
+        else:
+            time_progress_bar_value = 0
         
-        # Format time display
+        # Format time display (show actual percentage even if > 100%)
         time_str = "{} / {} ({:.1f}%)".format(
             self.format_time(actual_time),
             self.format_time(self.estimated_time_sec),
             time_percent
         )
         self.time_label.config(text=time_str)
-        self.time_progress_bar['value'] = time_percent
+        self.time_progress_bar['value'] = time_progress_bar_value
         
         # Calculate distance percentage
         distance_percent = 0
@@ -469,16 +473,26 @@ class GCodePlotterGUI:
                 if distance > 0.001:
                     total_distance += distance
                     
-                    # Use same calculation as gcode_plotter.py
-                    # time = distance * (STEPS_PER_MM / STEP_SCALE) / speed * 1000ms
-                    speed = default_speed  # Always use default speed
-                    move_time_ms = 1000.0 * abs(distance) / (1.0 / steps_per_mm * step_scale) / speed
+                    # Use EXACT calculation as gcode_plotter.py move_to() function
+                    # n_time = int(1000.0 * abs(distance) / (1.0 / STEPS_PER_MM * STEP_SCALE) / speed)
+                    # This simplifies to: n_time = int((distance * STEPS_PER_MM / STEP_SCALE / speed) * 1000)
+                    speed = default_speed
+                    n_time = int((abs(distance) * steps_per_mm / step_scale / speed) * 1000.0)
                     
-                    # Apply minimum time per move
-                    move_time_ms = max(10, move_time_ms)  # Minimum 10ms per move
+                    # Apply minimum time per move (matches gcode_plotter.py)
+                    n_time = max(10, n_time)
                     
-                    # Add small buffer per move
-                    total_time += (move_time_ms / 1000.0) + 0.02  # Convert to seconds + buffer
+                    # Add actual sleep time used in gcode_plotter.py: time.sleep(n_time / 1000.0 + 0.02)
+                    move_time_sec = (n_time / 1000.0) + 0.02
+                    
+                    # Add realistic overhead for each command:
+                    # - Python processing: ~2-5ms
+                    # - USB communication: ~5-10ms
+                    # - EBB command processing: ~1-3ms
+                    # Total overhead per command: ~10-20ms average
+                    overhead_per_command = 0.015  # 15ms average overhead
+                    
+                    total_time += move_time_sec + overhead_per_command
                 
                 x, y = new_x, new_y
         
